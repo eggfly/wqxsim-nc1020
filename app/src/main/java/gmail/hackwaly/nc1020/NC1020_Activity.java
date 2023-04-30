@@ -40,279 +40,279 @@ import android.widget.LinearLayout.LayoutParams;
 import android.widget.Toast;
 
 public class NC1020_Activity extends Activity implements Callback,
-		OnKeyListener {
-	private byte[] lcdBuffer;
-	private byte[] lcdBufferEx;
-	private Bitmap lcdBitmap;
-	private Bitmap numBitmap;
-	private Matrix lcdMatrix;
-	private SurfaceView lcdSurfaceView;
-	private SurfaceHolder lcdSurfaceHolder;
-	private NC1020_KeypadView gmudKeypad;
-	private SharedPreferences prefs;
+        OnKeyListener {
+    private byte[] lcdBuffer;
+    private byte[] lcdBufferEx;
+    private Bitmap lcdBitmap;
+    private Bitmap numBitmap;
+    private Matrix lcdMatrix;
+    private SurfaceView lcdSurfaceView;
+    private SurfaceHolder lcdSurfaceHolder;
+    private NC1020_KeypadView gmudKeypad;
+    private SharedPreferences prefs;
 
-	private class NC1020_ResultReceiver extends ResultReceiver {
-		public NC1020_ResultReceiver(Handler handler) {
-			super(handler);
-		}
+    private class NC1020_ResultReceiver extends ResultReceiver {
+        public NC1020_ResultReceiver(Handler handler) {
+            super(handler);
+        }
 
-		@Override
-		protected void onReceiveResult(int resultCode, Bundle resultData) {
-			switch (resultCode) {
-			case NC1020_Service.RESULT_QUIT:
-				NC1020_JNI.Save();
-				finish();
-				break;
-			case NC1020_Service.RESULT_FRAME:
-				updateLcd();
-				break;
-			}
-		}
-	}
+        @Override
+        protected void onReceiveResult(int resultCode, Bundle resultData) {
+            switch (resultCode) {
+                case NC1020_Service.RESULT_QUIT:
+                    NC1020_JNI.Save();
+                    finish();
+                    break;
+                case NC1020_Service.RESULT_FRAME:
+                    updateLcd();
+                    break;
+            }
+        }
+    }
 
-	private NC1020_ResultReceiver frameReceiver;
+    private NC1020_ResultReceiver frameReceiver;
 
-	@SuppressWarnings("deprecation")
-	@Override
-	protected void onCreate(Bundle savedInstanceState) {
-		super.onCreate(savedInstanceState);
-		getWindow().setFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
-				WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-		setContentView(R.layout.main);
+    @SuppressWarnings("deprecation")
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON,
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        setContentView(R.layout.main);
 
-		prefs = PreferenceManager.getDefaultSharedPreferences(this);
+        prefs = PreferenceManager.getDefaultSharedPreferences(this);
 
-		gmudKeypad = (NC1020_KeypadView) findViewById(R.id.gmud_keypad);
-		gmudKeypad.setOnKeyListener(this);
+        gmudKeypad = (NC1020_KeypadView) findViewById(R.id.gmud_keypad);
+        gmudKeypad.setOnKeyListener(this);
 
-		lcdSurfaceView = (SurfaceView) findViewById(R.id.lcd);
+        lcdSurfaceView = (SurfaceView) findViewById(R.id.lcd);
 
-		int w = this.getWindowManager().getDefaultDisplay().getWidth();
+        int w = this.getWindowManager().getDefaultDisplay().getWidth();
 
-		LayoutParams params = new LayoutParams(w, w / 2+20);
+        LayoutParams params = new LayoutParams(w, w / 2 + 20);
 
-		params.leftMargin = 0;
-		params.topMargin = 0;
+        params.leftMargin = 0;
+        params.topMargin = 0;
 
-		lcdSurfaceView.setLayoutParams(params);
+        lcdSurfaceView.setLayoutParams(params);
 
-		lcdSurfaceHolder = lcdSurfaceView.getHolder();
-		lcdBuffer = new byte[1600];
-		lcdBufferEx = new byte[1600 * 8];
-		lcdBitmap = Bitmap.createBitmap(160, 80, Bitmap.Config.ALPHA_8);
-		numBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.num);
-		lcdMatrix = new Matrix();
+        lcdSurfaceHolder = lcdSurfaceView.getHolder();
+        lcdBuffer = new byte[1600];
+        lcdBufferEx = new byte[1600 * 8];
+        lcdBitmap = Bitmap.createBitmap(160, 80, Bitmap.Config.ALPHA_8);
+        numBitmap = BitmapFactory.decodeResource(getResources(), R.drawable.num);
+        lcdMatrix = new Matrix();
 
-		lcdSurfaceHolder.addCallback(this);
-		frameReceiver = new NC1020_ResultReceiver(null);
-		this.load();
-	}
+        lcdSurfaceHolder.addCallback(this);
+        frameReceiver = new NC1020_ResultReceiver(null);
+        this.load();
+    }
 
-	@Override
-	public void onResume() {
-		tellBackground(false);
-		super.onResume();
-	}
+    @Override
+    public void onResume() {
+        tellBackground(false);
+        super.onResume();
+    }
 
-	@Override
-	public void onPause() {
-		tellBackground(true);
-		super.onPause();
-	}
+    @Override
+    public void onPause() {
+        tellBackground(true);
+        super.onPause();
+    }
 
-	private void tellService(boolean startOrStop) {
-		Intent intent = new Intent(this, NC1020_Service.class);
-		intent.setAction("tellService");
-		intent.putExtra("value", startOrStop ? frameReceiver : null);
-		startService(intent);
-	}
+    private void tellService(boolean startOrStop) {
+        Intent intent = new Intent(this, NC1020_Service.class);
+        intent.setAction("tellService");
+        intent.putExtra("value", startOrStop ? frameReceiver : null);
+        startService(intent);
+    }
 
-	private void tellSpeedUp(boolean speedUp) {
-		Intent intent = new Intent(this, NC1020_Service.class);
-		intent.setAction("tellSpeedUp");
-		intent.putExtra("value", speedUp);
-		startService(intent);
-	}
+    private void tellSpeedUp(boolean speedUp) {
+        Intent intent = new Intent(this, NC1020_Service.class);
+        intent.setAction("tellSpeedUp");
+        intent.putExtra("value", speedUp);
+        startService(intent);
+    }
 
-	private void tellBackground(boolean background) {
-		Intent intent = new Intent(this, NC1020_Service.class);
-		intent.setAction("tellBackground");
-		intent.putExtra("value", background);
-		startService(intent);
-	}
+    private void tellBackground(boolean background) {
+        Intent intent = new Intent(this, NC1020_Service.class);
+        intent.setAction("tellBackground");
+        intent.putExtra("value", background);
+        startService(intent);
+    }
 
-	@Override
-	public boolean onKeyDown(int keyCode, KeyEvent event) {
-		if (keyCode == KeyEvent.KEYCODE_BACK && event.getRepeatCount() == 0) {
-			NC1020_JNI.SetKey(0x3B, true);
-			return true;
-		}
-		return super.onKeyDown(keyCode, event);
-	}
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK && event.getRepeatCount() == 0) {
+            NC1020_JNI.SetKey(0x3B, true);
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
 
-	@Override
-	public boolean onKeyUp(int keyCode, KeyEvent event) {
-		if (keyCode == KeyEvent.KEYCODE_BACK && event.getRepeatCount() == 0) {
-			NC1020_JNI.SetKey(0x3B, false);
-			return true;
-		}
-		return super.onKeyDown(keyCode, event);
-	}
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_BACK && event.getRepeatCount() == 0) {
+            NC1020_JNI.SetKey(0x3B, false);
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
 
-	private void updateLcd() {
-		if (!NC1020_JNI.CopyLcdBuffer(lcdBuffer)) {
-			return;
-		}
-		Canvas lcdCanvas = lcdSurfaceHolder.lockCanvas();
-		for (int y = 0; y < 80; y++) {
-			for (int j = 0; j < 20; j++) {
-				byte p = lcdBuffer[20 * y + j];
-				for (int k = 0; k < 8; k++) {
-					lcdBufferEx[y * 160 + j * 8 + k] = (byte) ((p & (1 << (7 - k))) != 0 ? 0xFF
-							: 0x00);
-				}
-			}
-		}
-		for (int y = 0; y < 80; y++) {
-			lcdBufferEx[y * 160] = 0;
-		}
-		lcdBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(lcdBufferEx));
-		// lcdCanvas.drawColor(0xFF72B056);
-		lcdCanvas.drawColor(0xFF80B080);
-		// lcdCanvas.drawBitmap(lcdBitmap, lcdMatrix, null);
+    private void updateLcd() {
+        if (!NC1020_JNI.CopyLcdBuffer(lcdBuffer)) {
+            return;
+        }
+        Canvas lcdCanvas = lcdSurfaceHolder.lockCanvas();
+        for (int y = 0; y < 80; y++) {
+            for (int j = 0; j < 20; j++) {
+                byte p = lcdBuffer[20 * y + j];
+                for (int k = 0; k < 8; k++) {
+                    lcdBufferEx[y * 160 + j * 8 + k] = (byte) ((p & (1 << (7 - k))) != 0 ? 0xFF
+                            : 0x00);
+                }
+            }
+        }
+        for (int y = 0; y < 80; y++) {
+            lcdBufferEx[y * 160] = 0;
+        }
+        lcdBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(lcdBufferEx));
+        // lcdCanvas.drawColor(0xFF72B056);
+        lcdCanvas.drawColor(0xFF80B080);
+        // lcdCanvas.drawBitmap(lcdBitmap, lcdMatrix, null);
 
-		// lcdCanvas.drawBitmap(lcdBitmap,null, new Rect(0, 0, 159, 79), null);
-		
-		int w = lcdCanvas.getWidth();
-		int h = lcdCanvas.getHeight();
-		
-		lcdCanvas.drawBitmap(lcdBitmap, null,
-				new Rect(0, 0, w, h-20),
-				null);
+        // lcdCanvas.drawBitmap(lcdBitmap,null, new Rect(0, 0, 159, 79), null);
+
+        int w = lcdCanvas.getWidth();
+        int h = lcdCanvas.getHeight();
+
+        lcdCanvas.drawBitmap(lcdBitmap, null,
+                new Rect(0, 0, w, h - 20),
+                null);
 //		lcdCanvas.drawBitmap(numBitmap, null,new Rect(0,h-20,w,h), null);
-		
-		Paint paint = new Paint();
-		paint.setColor(Color.WHITE);
-		Paint paint2 = new Paint();
-		paint2.setTextSize(20);
-		paint2.setColor(Color.BLACK);
-		
-		lcdCanvas.drawRect(0, h-20, w, h, paint);
-		for(int i=1;i<=9;i++){
-			lcdCanvas.drawText(i+"", (w/10)*i+(w/10/4), h, paint2);
-		}
 
-		lcdSurfaceHolder.unlockCanvasAndPost(lcdCanvas);
-	}
+        Paint paint = new Paint();
+        paint.setColor(Color.WHITE);
+        Paint paint2 = new Paint();
+        paint2.setTextSize(20);
+        paint2.setColor(Color.BLACK);
 
-	@Override
-	public boolean onCreateOptionsMenu(Menu menu) {
-		// Inflate the menu; this adds items to the action bar if it is present.
-		getMenuInflater().inflate(R.menu.main, menu);
-		menu.findItem(R.id.action_speed_up).setChecked(
-				prefs.getBoolean("SpeedUp", false));
-		return true;
-	}
+        lcdCanvas.drawRect(0, h - 20, w, h, paint);
+        for (int i = 1; i <= 9; i++) {
+            // lcdCanvas.drawText(i+"", (w/10)*i+(w/10/4), h, paint2);
+        }
 
-	@Override
-	public boolean onOptionsItemSelected(MenuItem item) {
-		// Handle item selection
-		switch (item.getItemId()) {
-		case R.id.action_quit:
-			tellService(false);
-			finish();
-			return true;
-		case R.id.action_restart:
-			NC1020_JNI.Reset();
-			return true;
-		case R.id.action_speed_up:
-			if (item.isChecked()) {
-				item.setChecked(false);
-			} else {
-				item.setChecked(true);
-			}
-			tellSpeedUp(item.isChecked());
-			prefs.edit().putBoolean("SpeedUp", item.isChecked()).commit();
-			return true;
-		case R.id.action_load:
-			NC1020_JNI.Load();
-			return true;
-		case R.id.action_save:
-			NC1020_JNI.Save();
-			return true;
-		default:
-			return super.onOptionsItemSelected(item);
-		}
-	}
+        lcdSurfaceHolder.unlockCanvasAndPost(lcdCanvas);
+    }
 
-	@Override
-	public void surfaceChanged(SurfaceHolder holder, int format, int width,
-			int height) {
-	}
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.main, menu);
+        menu.findItem(R.id.action_speed_up).setChecked(
+                prefs.getBoolean("SpeedUp", false));
+        return true;
+    }
 
-	@Override
-	public void surfaceCreated(SurfaceHolder holder) {
-		lcdMatrix.setScale(3, 3);
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        // Handle item selection
+        switch (item.getItemId()) {
+            case R.id.action_quit:
+                tellService(false);
+                finish();
+                return true;
+            case R.id.action_restart:
+                NC1020_JNI.Reset();
+                return true;
+            case R.id.action_speed_up:
+                if (item.isChecked()) {
+                    item.setChecked(false);
+                } else {
+                    item.setChecked(true);
+                }
+                tellSpeedUp(item.isChecked());
+                prefs.edit().putBoolean("SpeedUp", item.isChecked()).commit();
+                return true;
+            case R.id.action_load:
+                NC1020_JNI.Load();
+                return true;
+            case R.id.action_save:
+                NC1020_JNI.Save();
+                return true;
+            default:
+                return super.onOptionsItemSelected(item);
+        }
+    }
 
-		Canvas lcdCanvas = lcdSurfaceHolder.lockCanvas();
-		lcdCanvas.drawColor(0xFF72B056);
-		lcdSurfaceHolder.unlockCanvasAndPost(lcdCanvas);
-	}
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width,
+                               int height) {
+    }
 
-	@Override
-	public void surfaceDestroyed(SurfaceHolder holder) {
-	}
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        lcdMatrix.setScale(3, 3);
 
-	@Override
-	public void onKeyDown(int keyId) {
-		NC1020_JNI.SetKey(keyId, true);
-	}
+        Canvas lcdCanvas = lcdSurfaceHolder.lockCanvas();
+        lcdCanvas.drawColor(0xFF72B056);
+        lcdSurfaceHolder.unlockCanvasAndPost(lcdCanvas);
+    }
 
-	@Override
-	public void onKeyUp(int keyId) {
-		NC1020_JNI.SetKey(keyId, false);
-	}
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
+    }
+
+    @Override
+    public void onKeyDown(int keyId) {
+        NC1020_JNI.SetKey(keyId, true);
+    }
+
+    @Override
+    public void onKeyUp(int keyId) {
+        NC1020_JNI.SetKey(keyId, false);
+    }
 
 
-	private void copyToLocal(String asset,String dataFilePath) throws IOException {
-		final AssetManager assetManager = this.getAssets();
-		final String newFilePath = dataFilePath + "/" + asset;
-		final File newFile = new File(newFilePath);
-		if(newFile.exists()){
-			return;
-		}
-		final String newFileDirPath = newFile.getParent();
-		if (newFileDirPath != null) {
-			final File newFileDir = new File(newFileDirPath);
-			if (!newFileDir.exists() && !newFileDir.mkdirs()) {
-				throw new IOException("Failed to mkdirs: " + newFileDirPath);
-			}
-		}
-		try (final OutputStream out = new FileOutputStream(newFilePath, false)) {
-			try (final InputStream in = assetManager.open(asset)) {
-				final byte[] buffer = new byte[65535];
-				while (in.read(buffer) > 0) {
-					out.write(buffer);
-				}
-			}
-		}
-	}
+    private void copyToLocal(String asset, String dataFilePath) throws IOException {
+        final AssetManager assetManager = this.getAssets();
+        final String newFilePath = dataFilePath + "/" + asset;
+        final File newFile = new File(newFilePath);
+        if (newFile.exists()) {
+            return;
+        }
+        final String newFileDirPath = newFile.getParent();
+        if (newFileDirPath != null) {
+            final File newFileDir = new File(newFileDirPath);
+            if (!newFileDir.exists() && !newFileDir.mkdirs()) {
+                throw new IOException("Failed to mkdirs: " + newFileDirPath);
+            }
+        }
+        try (final OutputStream out = new FileOutputStream(newFilePath, false)) {
+            try (final InputStream in = assetManager.open(asset)) {
+                final byte[] buffer = new byte[65535];
+                while (in.read(buffer) > 0) {
+                    out.write(buffer);
+                }
+            }
+        }
+    }
 
-	private void load(){
-		final String dirPath = "nc1020";
-		final String dataFilePath = this.getFilesDir().getAbsolutePath() + "/" + dirPath;
-		List<String> list = new ArrayList<>();
-		list.add("ns1020.fls");
-		try{
-			this.copyToLocal("nc1020.fls",dataFilePath);
-			this.copyToLocal("obj_lu.bin",dataFilePath);
-		}catch(IOException e){
-			e.printStackTrace();
-			return;
-		}
+    private void load() {
+        final String dirPath = "nc1020";
+        final String dataFilePath = this.getFilesDir().getAbsolutePath() + "/" + dirPath;
+        List<String> list = new ArrayList<>();
+        list.add("ns1020.fls");
+        try {
+            this.copyToLocal("nc1020.fls", dataFilePath);
+            this.copyToLocal("obj_lu.bin", dataFilePath);
+        } catch (IOException e) {
+            e.printStackTrace();
+            return;
+        }
 
-		NC1020_JNI.Initialize(dataFilePath);
-		NC1020_JNI.Load();
-		tellService(true);
-	}
+        NC1020_JNI.Initialize(dataFilePath);
+        NC1020_JNI.Load();
+        tellService(true);
+    }
 }

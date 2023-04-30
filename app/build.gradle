@@ -1,13 +1,13 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 30
+    compileSdkVersion 33
     buildToolsVersion "30.0.2"
-
+    ndkVersion '25.2.9519653'
     defaultConfig {
         applicationId "gmail.hackwaly.nc1020"
         minSdkVersion 14
-        targetSdkVersion 30
+        targetSdkVersion 33
 
         ndk {
             moduleName "NC1020"
@@ -33,7 +33,7 @@ android {
 }
 
 repositories {
-    maven {url 'https://maven.aliyun.com/nexus/content/groups/public/'}
+    maven { url 'https://maven.aliyun.com/nexus/content/groups/public/' }
     maven { url 'https://maven.aliyun.com/repository/google' }
 
     maven { url "https://jitpack.io" }
