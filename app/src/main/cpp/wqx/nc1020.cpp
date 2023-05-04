@@ -1,8 +1,17 @@
 #include "nc1020.h"
+#include "lru.h"
 #include <string>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <android/log.h>
+
+#define LOG_TAG "eggfly"
+#define LOGD(...) ((void)__android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__))
+#define LOGI(...) ((void)__android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__))
+#define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__))
+#define LOGE(...) ((void)__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__))
+
 
 namespace wqx {
     using std::string;
@@ -83,14 +92,15 @@ namespace wqx {
     } nc1020_states_t;
 
     static string nc1020_dir;
-
-    static uint8_t rom_buff[1];
+    static FILE *rom_file;
     // eggfly add
-    static uint8_t my_rom_buff[ROM_SIZE];
+    static uint8_t my_rom_buff[0x8000];
+    static uint8_t my_rom_buff0;
+    static uint8_t rom_buff[1];
 
-    static uint8_t nor_buff[NOR_SIZE];
     // eggfly add
     static uint8_t my_nor_buff[NOR_SIZE];
+    static uint8_t *nor_buff;
 
     static uint8_t *rom_volume0[0x100];
     static uint8_t *rom_volume1[0x100];
@@ -119,7 +129,7 @@ namespace wqx {
     static uint8_t *ram_page1 = ram_buff + 0x2000;
     static uint8_t *ram_page2 = ram_buff + 0x4000;
     static uint8_t *ram_page3 = ram_buff + 0x6000;
-
+    static lru_t lru;
     static uint8_t *clock_buff = nc1020_states.clock_data;
     static uint8_t &clock_flags = nc1020_states.clock_flags;
 
@@ -172,6 +182,9 @@ namespace wqx {
     void SwitchBank() {
         uint8_t bank_idx = ram_io[0x00];
         uint8_t *bank = GetBank(bank_idx);
+//        LOGE("idx=%d, %p, nor_offset=0x%02x, rom_offset=0x%02x, nor_buff=%p->%p", bank_idx, bank,
+//             bank - nor_buff, bank - rom_buff,
+//             nor_buff, nor_buff + NOR_SIZE);
         memmap[2] = bank;
         memmap[3] = bank + 0x2000;
         memmap[4] = bank + 0x4000;
@@ -442,7 +455,7 @@ namespace wqx {
 
 /**
  * ProcessBinary
- * encrypt or decrypt wqx's binary file. just flip every bank.
+ * encrypt or decrypt wqx's binary rom_file. just flip every bank.
  */
     void ProcessBinary(uint8_t *dest, uint8_t *src, size_t size) {
         size_t offset = 0;
@@ -453,19 +466,54 @@ namespace wqx {
         }
     }
 
+    void my_print_lru(lru_t *lru) {
+        LOGE("LRU (capacity=%d, size=%d):\n", lru->capacity, lru->size);
+        LOGE("  chain: ");
+        node_t *node = lru->head;
+        while (node) {
+            LOGE("%d,", node->key);
+            node = node->next;
+        }
+        printf("\n");
+    }
+
     // TODO
     void LoadRom() {
-        uint8_t *temp_buff = (uint8_t *) malloc(ROM_SIZE);
-        FILE *file = fopen((nc1020_dir + "/obj_lu.bin").c_str(), "rb");
-        fread(temp_buff, 1, ROM_SIZE, file);
-        ProcessBinary(my_rom_buff, temp_buff, ROM_SIZE);
-        free(temp_buff);
-        fclose(file);
+    }
+
+    size_t last_bank_idx = 0;
+
+    uint8_t *peekROMByte(size_t pos) {
+        auto bank_idx = pos / 0x8000;
+        auto addr = pos % 0x8000;
+        if (addr >= 0x4000) {
+            addr -= 0x4000;
+        } else {
+            addr += 0x4000;
+        }
+        bool ok = get_value(&lru, bank_idx, my_rom_buff);
+        if (!ok) {
+            fseek(rom_file, bank_idx * 0x8000, SEEK_SET);
+            fread(my_rom_buff, 1, 0x8000, rom_file);
+            insert_value_to_lru(&lru, bank_idx, my_rom_buff);
+            if (last_bank_idx != bank_idx) {
+                LOGE("peek() miss cache, bank=0x%02x, size=%d", bank_idx, lru.size);
+//                my_print_lru(&lru);
+            }
+        } else {
+            if (last_bank_idx != bank_idx) {
+                // LOGE("peek() got cache, bank=0x%02x, size=%d", bank_idx, lru.size);
+            }
+        }
+        last_bank_idx = bank_idx;
+        my_rom_buff0 = my_rom_buff[addr];
+        // fclose(rom_file);
+        return &my_rom_buff0;
     }
 
     // TODO
     void LoadNor() {
-        uint8_t *temp_buff = (uint8_t *) malloc(NOR_SIZE);
+        auto *temp_buff = (uint8_t *) malloc(NOR_SIZE);
         FILE *file = fopen((nc1020_dir + "/nc1020.fls").c_str(), "rb");
         fread(temp_buff, 1, NOR_SIZE, file);
         ProcessBinary(nor_buff, temp_buff, NOR_SIZE);
@@ -474,13 +522,6 @@ namespace wqx {
     }
 
     void SaveNor() {
-        uint8_t *temp_buff = (uint8_t *) malloc(NOR_SIZE);
-        FILE *file = fopen((nc1020_dir + "/nc1020.fls").c_str(), "wb");
-        ProcessBinary(temp_buff, nor_buff, NOR_SIZE);
-        fwrite(temp_buff, 1, NOR_SIZE, file);
-        fflush(file);
-        free(temp_buff);
-        fclose(file);
     }
 
 //    inline uint8_t &Peek(uint8_t addr) {
@@ -489,15 +530,21 @@ namespace wqx {
 
     // TODO(eggfly): inline
     uint8_t &Peek(uint16_t addr) {
-        uint8_t *mmap_addr = memmap[addr / 0x2000];
-        if (mmap_addr >= rom_buff && mmap_addr < rom_buff + ROM_SIZE) {
-            size_t offset = mmap_addr - rom_buff;
-            return my_rom_buff[offset + addr % 0x2000];
-        } else if (mmap_addr >= nor_buff && mmap_addr < nor_buff + NOR_SIZE) {
-            size_t offset = mmap_addr - nor_buff;
-            return nor_buff[offset + addr % 0x2000];
+        uint8_t *ptr = memmap[addr / 0x2000];
+        if (ptr >= rom_buff && ptr < rom_buff + ROM_SIZE) {
+            size_t offset = ptr - rom_buff;
+            auto pos = offset + (addr % 0x2000);
+            return *peekROMByte(pos);
+            // return my_rom_buff[pos];
+        } else if (ptr >= nor_buff && ptr < nor_buff + NOR_SIZE) {
+            size_t offset = ptr - nor_buff;
+            return nor_buff[offset + (addr % 0x2000)];
+        } else if (ptr >= nc1020_states.ram &&
+                   ptr < nc1020_states.ram + sizeof(nc1020_states.ram)) {
+            return ptr[addr % 0x2000];
+        } else {
+            return ptr[addr % 0x2000];
         }
-        return mmap_addr[addr % 0x2000];
     }
 
     inline uint16_t PeekW(uint16_t addr) {
@@ -523,7 +570,9 @@ namespace wqx {
 
     inline bool flash_nor_store(uint8_t *ptr, uint8_t value) {
         if (ptr >= nor_buff && ptr < nor_buff + NOR_SIZE) {
-            *ptr &= value;
+            auto offset = ptr - nor_buff;
+            nor_buff[offset] &= value;
+            // *ptr &= value;
             return true;
         }
         return false;
@@ -595,8 +644,9 @@ namespace wqx {
                         fp_bank_idx = bank_idx;
                         uint8_t *ptr = bank + 0x4000;
                         if (ptr >= nor_buff && ptr < nor_buff + NOR_SIZE) {
-                            fp_bak1 = *ptr;
-                            fp_bak2 = *(ptr + 1);
+                            auto offset = ptr - nor_buff;
+                            nor_buff[offset] = fp_bak1;
+                            nor_buff[offset + 1] = fp_bak2;
                         } else {
                             abort();
                         }
@@ -610,8 +660,9 @@ namespace wqx {
                 if (value == 0xF0) {
                     uint8_t *ptr = bank + 0x4000;
                     if (ptr >= nor_buff && ptr < nor_buff + NOR_SIZE) {
-                        *ptr = fp_bak1;
-                        *(ptr + 1) = fp_bak2;
+                        auto offset = ptr - nor_buff;
+                        nor_buff[offset] = fp_bak1;
+                        nor_buff[offset + 1] = fp_bak2;
                     } else {
                         abort();
                     }
@@ -647,7 +698,8 @@ namespace wqx {
                 for (size_t i = 0; i < 0x20; i++) {
                     uint8_t *ptr = nor_banks[i];
                     if (ptr >= nor_buff && ptr < nor_buff + NOR_SIZE) {
-                        memset(ptr, 0xFF, 0x8000);
+                        auto offset = ptr - nor_buff;
+                        memset(nor_buff + offset, 0xFF, 0x8000);
                     } else {
                         abort();
                     }
@@ -662,7 +714,8 @@ namespace wqx {
                 if (value == 0x30) {
                     uint8_t *ptr = bank + (addr - (addr % 0x800) - 0x4000);
                     if (ptr >= nor_buff && ptr < nor_buff + NOR_SIZE) {
-                        memset(ptr, 0xFF, 0x800);
+                        auto offset = ptr - nor_buff;
+                        memset(nor_buff + offset, 0xFF, 0x800);
                     } else {
                         abort();
                     }
@@ -685,7 +738,13 @@ namespace wqx {
     }
 
     void Initialize(const char *path) {
+        // 64 * 0x8000
+        init_lru(&lru, 2 * 1024 * 1024 / 0x8000);
+        print_lru(&lru);
+        nor_buff = static_cast<uint8_t *>(malloc(NOR_SIZE));
+        // my_rom_buff = static_cast<uint8_t *>(malloc(ROM_SIZE));
         nc1020_dir = string(path);
+        rom_file = fopen((nc1020_dir + "/obj_lu.bin").c_str(), "rb");
         for (size_t i = 0; i < 0x100; i++) {
             rom_volume0[i] = rom_buff + (0x8000 * i);
             rom_volume1[i] = rom_buff + (0x8000 * (0x100 + i));
@@ -714,21 +773,6 @@ namespace wqx {
         io_write[0x3F] = Write3F;
 
         LoadRom();
-//#ifdef DEBUG
-//	FILE* file = fopen((nc1020_dir + "/wqxsimlogs.bin").c_str(), "rb");
-//	fseek(file, 0L, SEEK_END);
-//	size_t file_size = ftell(file);
-//	size_t insts_count = (file_size - 8) / 8;
-//	debug_logs.insts_count = insts_count;
-//	debug_logs.logs = (log_rec_t*)malloc(insts_count * 8);
-//	fseek(file, 0L, SEEK_SET);
-//	fread(&debug_logs.insts_start, 4, 1, file);
-//	fseek(file, 4L, SEEK_SET);
-//	fread(&debug_logs.peek_addr, 4, 1, file);
-//	fseek(file, 8L, SEEK_SET);
-//	fread(debug_logs.logs, 8, insts_count, file);
-//	fclose(file);
-//#endif
     }
 
     void ResetStates() {
@@ -781,24 +825,14 @@ namespace wqx {
 
     void LoadStates() {
         ResetStates();
-        FILE *file = fopen((nc1020_dir + "/nc1020.sts").c_str(), "rb");
-        if (file == NULL) {
-            return;
-        }
-        fread(&nc1020_states, 1, sizeof(nc1020_states), file);
-        fclose(file);
-        if (version != VERSION) {
-            return;
-        }
-        SwitchVolume();
     }
 
     // eggfly 暂时不用实现
     void SaveStates() {
-        FILE *file = fopen((nc1020_dir + "/nc1020.sts").c_str(), "wb");
-        fwrite(&nc1020_states, 1, sizeof(nc1020_states), file);
-        fflush(file);
-        fclose(file);
+//        FILE *rom_file = fopen((nc1020_dir + "/nc1020.sts").c_str(), "wb");
+//        fwrite(&nc1020_states, 1, sizeof(nc1020_states), rom_file);
+//        fflush(rom_file);
+//        fclose(rom_file);
     }
 
     void LoadNC1020() {

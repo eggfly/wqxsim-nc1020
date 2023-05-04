@@ -1,6 +1,12 @@
 apply plugin: 'com.android.application'
 
 android {
+    packagingOptions {
+        doNotStrip "*/armeabi/*.so"
+        doNotStrip "*/armeabi-v7a/*.so"
+        doNotStrip "*/x86/*.so"
+        doNotStrip "*/arm64-v8a/*.so"
+    }
     compileSdkVersion 33
     buildToolsVersion "30.0.2"
     ndkVersion '25.2.9519653'
