@@ -8,7 +8,6 @@ android {
         doNotStrip "*/arm64-v8a/*.so"
     }
     compileSdkVersion 33
-    buildToolsVersion "30.0.2"
     ndkVersion '25.2.9519653'
     defaultConfig {
         applicationId "gmail.hackwaly.nc1020"
@@ -36,6 +35,7 @@ android {
             path file('src/main/cpp/Android.mk')
         }
     }
+    namespace 'gmail.hackwaly.nc1020'
 }
 
 repositories {
