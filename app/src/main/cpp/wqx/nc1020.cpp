@@ -4,6 +4,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+
+#ifndef ARDUINO
+
 #include <android/log.h>
 
 #define LOG_TAG "eggfly"
@@ -12,6 +16,12 @@
 #define LOGW(...) ((void)__android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__))
 #define LOGE(...) ((void)__android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__))
 
+#else
+
+#include <FS.h>
+#include <SD.h>
+
+#endif
 
 namespace wqx {
     using std::string;
@@ -31,7 +41,8 @@ namespace wqx {
 
     static const size_t ROM_SIZE = 0x8000 * 0x300;
     static const size_t NOR_SIZE = 0x8000 * 0x20;
-
+    static size_t slice_count = 0;
+    static double instructions_per_second = 0;
     static const uint16_t IO_LIMIT = 0x40;
 #define IO_API
 
@@ -92,13 +103,17 @@ namespace wqx {
     } nc1020_states_t;
 
     static string nc1020_dir;
+#ifdef ARDUINO
+    static File sdRomFile;
+#else
     static FILE *rom_file;
-    // eggfly add
+#endif
+// eggfly add
     static uint8_t my_rom_buff[0x8000];
     static uint8_t my_rom_buff0;
     static uint8_t rom_buff[1];
 
-    // eggfly add
+// eggfly add
     static uint8_t my_nor_buff[NOR_SIZE];
     static uint8_t *nor_buff;
 
@@ -182,9 +197,9 @@ namespace wqx {
     void SwitchBank() {
         uint8_t bank_idx = ram_io[0x00];
         uint8_t *bank = GetBank(bank_idx);
-//        LOGE("idx=%d, %p, nor_offset=0x%02x, rom_offset=0x%02x, nor_buff=%p->%p", bank_idx, bank,
-//             bank - nor_buff, bank - rom_buff,
-//             nor_buff, nor_buff + NOR_SIZE);
+        //        LOGE("idx=%d, %p, nor_offset=0x%02x, rom_offset=0x%02x, nor_buff=%p->%p", bank_idx, bank,
+        //             bank - nor_buff, bank - rom_buff,
+        //             nor_buff, nor_buff + NOR_SIZE);
         memmap[2] = bank;
         memmap[3] = bank + 0x2000;
         memmap[4] = bank + 0x4000;
@@ -454,9 +469,9 @@ namespace wqx {
     }
 
 /**
- * ProcessBinary
- * encrypt or decrypt wqx's binary rom_file. just flip every bank.
- */
+   ProcessBinary
+   encrypt or decrypt wqx's binary rom_file. just flip every bank.
+*/
     void ProcessBinary(uint8_t *dest, uint8_t *src, size_t size) {
         size_t offset = 0;
         while (offset < size) {
@@ -465,6 +480,8 @@ namespace wqx {
             offset += 0x8000;
         }
     }
+
+#ifndef ARDUINO
 
     void my_print_lru(lru_t *lru) {
         LOGE("LRU (capacity=%d, size=%d):\n", lru->capacity, lru->size);
@@ -477,11 +494,69 @@ namespace wqx {
         printf("\n");
     }
 
-    // TODO
+#endif
+
+// TODO
     void LoadRom() {
     }
 
-    size_t last_bank_idx = 0;
+    size_t last_bank_idx = -1;
+
+
+#ifdef ARDUINO
+    void readSDFileToBuffer(uint8_t* dest, File file, size_t seek_pos, size_t max_len) {
+Serial.printf("readSDFileToBuffer(), file=%p\n", file);
+size_t len = 0;
+uint32_t start = millis();
+uint32_t end = start;
+if (file) {
+len = file.size();
+size_t flen = len;
+len = len > max_len ? max_len : len;
+start = millis();
+size_t bytesRead = 0;
+if (seek_pos > 0) {
+file.seek(seek_pos);
+}
+while (len) {
+size_t toRead = len;
+if (toRead > 512) {
+toRead = 512;
+}
+file.read(dest + bytesRead, toRead);
+bytesRead += 512;
+len -= toRead;
+}
+end = millis() - start;
+Serial.printf("%u bytes read for %u ms\n", bytesRead, end);
+file.close();
+} else {
+Serial.println("Failed to open file for reading....");
+}
+}
+#endif
+
+    void read_bank_from_rom_file(size_t bank_idx) {
+#ifndef ARDUINO
+        fseek(rom_file, bank_idx * 0x8000, SEEK_SET);
+        fread(my_rom_buff, 1, 0x8000, rom_file);
+        LOGE("%d: 0x%02X,0x%02X,0x%02X,0x%02X,", bank_idx,
+             my_rom_buff[0],
+             my_rom_buff[1],
+             my_rom_buff[2],
+             my_rom_buff[3]);
+#else
+        File romFile = SD.open("/obj_lu.bin");
+  readSDFileToBuffer(my_rom_buff, romFile, bank_idx * 0x8000, 0x8000);
+  romFile.close();
+  Serial.printf("%d: 0x%02X,0x%02X,0x%02X,0x%02X,\n", bank_idx,
+                my_rom_buff[0],
+                my_rom_buff[1],
+                my_rom_buff[2],
+                my_rom_buff[3]);
+#endif
+
+    }
 
     uint8_t *peekROMByte(size_t pos) {
         auto bank_idx = pos / 0x8000;
@@ -491,45 +566,60 @@ namespace wqx {
         } else {
             addr += 0x4000;
         }
-        bool ok = get_value(&lru, bank_idx, my_rom_buff);
+        value_type *value_ptr;
+        bool ok = get_value(&lru, bank_idx, &value_ptr);
         if (!ok) {
-            fseek(rom_file, bank_idx * 0x8000, SEEK_SET);
-            fread(my_rom_buff, 1, 0x8000, rom_file);
+            read_bank_from_rom_file(bank_idx);
+            // sleep(1);
             insert_value_to_lru(&lru, bank_idx, my_rom_buff);
             if (last_bank_idx != bank_idx) {
+#ifndef ARDUINO
                 LOGE("peek() miss cache, bank=0x%02x, size=%d", bank_idx, lru.size);
-//                my_print_lru(&lru);
+#else
+                Serial.printf("peek() miss cache, bank=0x%02x, size=%d\n", bank_idx, lru.size);
+#endif
+                //                my_print_lru(&lru);
             }
+            my_rom_buff0 = my_rom_buff[addr];
         } else {
+            my_rom_buff0 = (*value_ptr)[addr];
             if (last_bank_idx != bank_idx) {
                 // LOGE("peek() got cache, bank=0x%02x, size=%d", bank_idx, lru.size);
             }
         }
         last_bank_idx = bank_idx;
-        my_rom_buff0 = my_rom_buff[addr];
         // fclose(rom_file);
         return &my_rom_buff0;
     }
 
-    // TODO
+
+// TODO
     void LoadNor() {
+#ifdef ARDUINO
+        Serial.println("LoadNor() start!");
+  auto *temp_buff = (uint8_t *) ps_malloc(NOR_SIZE);
+  File file = SD.open("/nc1020.fls");
+  readSDFileToBuffer(temp_buff, file, 0, NOR_SIZE);
+  ProcessBinary(nor_buff, temp_buff, NOR_SIZE);
+  free(temp_buff);
+  file.close();
+  Serial.println("LoadNor() end!");
+#else
+        LOGE("LoadNor() start!");
         auto *temp_buff = (uint8_t *) malloc(NOR_SIZE);
         FILE *file = fopen((nc1020_dir + "/nc1020.fls").c_str(), "rb");
         fread(temp_buff, 1, NOR_SIZE, file);
         ProcessBinary(nor_buff, temp_buff, NOR_SIZE);
         free(temp_buff);
         fclose(file);
+#endif
     }
 
     void SaveNor() {
     }
 
-//    inline uint8_t &Peek(uint8_t addr) {
-//        return ram_buff[addr];
-//    }
-
-    // TODO(eggfly): inline
-    uint8_t &Peek(uint16_t addr) {
+// TODO(eggfly): inline
+    inline __attribute__((always_inline)) uint8_t &Peek(uint16_t addr) {
         uint8_t *ptr = memmap[addr / 0x2000];
         if (ptr >= rom_buff && ptr < rom_buff + ROM_SIZE) {
             size_t offset = ptr - rom_buff;
@@ -547,11 +637,11 @@ namespace wqx {
         }
     }
 
-    inline uint16_t PeekW(uint16_t addr) {
+    inline __attribute__((always_inline)) uint16_t PeekW(uint16_t addr) {
         return Peek(addr) | (Peek((uint16_t) (addr + 1)) << 8);
     }
 
-    inline uint8_t Load(uint16_t addr) {
+    inline __attribute__((always_inline)) uint8_t Load(uint16_t addr) {
         if (addr < IO_LIMIT) {
             return io_read[addr](addr);
         }
@@ -568,7 +658,7 @@ namespace wqx {
         return Peek(addr);
     }
 
-    inline bool flash_nor_store(uint8_t *ptr, uint8_t value) {
+    inline __attribute__((always_inline)) bool flash_nor_store(uint8_t *ptr, uint8_t value) {
         if (ptr >= nor_buff && ptr < nor_buff + NOR_SIZE) {
             auto offset = ptr - nor_buff;
             nor_buff[offset] &= value;
@@ -578,7 +668,7 @@ namespace wqx {
         return false;
     }
 
-    inline void Store(uint16_t addr, uint8_t value) {
+    inline __attribute__((always_inline)) void Store(uint16_t addr, uint8_t value) {
         if (addr < IO_LIMIT) {
             io_write[addr](addr, value);
             return;
@@ -741,10 +831,16 @@ namespace wqx {
         // 64 * 0x8000
         init_lru(&lru, 2 * 1024 * 1024 / 0x8000);
         print_lru(&lru);
-        nor_buff = static_cast<uint8_t *>(malloc(NOR_SIZE));
         // my_rom_buff = static_cast<uint8_t *>(malloc(ROM_SIZE));
+#ifndef ARDUINO
+        nor_buff = static_cast<uint8_t *>(malloc(NOR_SIZE));
         nc1020_dir = string(path);
         rom_file = fopen((nc1020_dir + "/obj_lu.bin").c_str(), "rb");
+#else
+        nor_buff = static_cast<uint8_t *>(ps_malloc(NOR_SIZE));
+  // sdRomFile = SD.open("/obj_lu.bin");
+  // Serial.printf("sdRomFile=0x%02x\n", sdRomFile);
+#endif
         for (size_t i = 0; i < 0x100; i++) {
             rom_volume0[i] = rom_buff + (0x8000 * i);
             rom_volume1[i] = rom_buff + (0x8000 * (0x100 + i));
@@ -776,6 +872,11 @@ namespace wqx {
     }
 
     void ResetStates() {
+#ifdef ARDUINO
+        Serial.printf("ResetStates\n");
+#else
+        LOGE("ResetStates");
+#endif
         version = VERSION;
 
         memset(ram_buff, 0, 0x8000);
@@ -811,11 +912,6 @@ namespace wqx {
         reg_pc = PeekW(RESET_VEC);
         timer0_cycles = CYCLES_TIMER0;
         timer1_cycles = CYCLES_TIMER1;
-
-//#ifdef DEBUG
-//	executed_insts = 0;
-//	debug_done = false;
-//#endif
     }
 
     void Reset() {
@@ -827,12 +923,8 @@ namespace wqx {
         ResetStates();
     }
 
-    // eggfly 暂时不用实现
+// eggfly 暂时不用实现
     void SaveStates() {
-//        FILE *rom_file = fopen((nc1020_dir + "/nc1020.sts").c_str(), "wb");
-//        fwrite(&nc1020_states, 1, sizeof(nc1020_states), rom_file);
-//        fflush(rom_file);
-//        fclose(rom_file);
     }
 
     void LoadNC1020() {
@@ -846,6 +938,7 @@ namespace wqx {
     }
 
     void SetKey(uint8_t key_id, bool down_or_up) {
+        LOGE("SetKey() key=%d, down_or_up=%d", key_id, down_or_up);
         uint8_t row = key_id % 8;
         uint8_t col = key_id / 8;
         uint8_t bits = 1 << col;
@@ -906,6 +999,15 @@ namespace wqx {
     }
 
     void RunTimeSlice(size_t time_slice, bool speed_up) {
+        slice_count++;
+#ifdef ARDUINO
+        auto begin = millis();
+  Serial.printf("RunTimeSlice: %d, IPS=%lf\n", slice_count, instructions_per_second);
+#else
+        struct timespec begin, end;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &begin);
+        LOGE("RunTimeSlice: %d, IPS=%lf", slice_count, instructions_per_second);
+#endif
         size_t end_cycles = time_slice * CYCLES_MS;
         register size_t cycles = wqx::cycles;
         register uint16_t reg_pc = wqx::reg_pc;
@@ -916,50 +1018,11 @@ namespace wqx {
         register uint8_t reg_sp = wqx::reg_sp;
 
         while (cycles < end_cycles) {
-//#ifdef DEBUG
-//		if (executed_insts == 2792170) {
-//			printf("debug start!\n");
-//		}
-//		if (executed_insts >= debug_logs.insts_start &&
-//			executed_insts < debug_logs.insts_start + debug_logs.insts_count) {
-//			log_rec_t& log = debug_logs.logs[executed_insts - debug_logs.insts_start];
-//			string debug_info;
-//			if (log.reg_pc != reg_pc) {
-//				debug_info += " pc ";
-//			}
-//			if (log.reg_a != reg_a) {
-//				debug_info += " a ";
-//			}
-//			if (log.reg_ps != reg_ps) {
-//				debug_info += " ps ";
-//			}
-//			if (log.reg_x != reg_x) {
-//				debug_info += " x ";
-//			}
-//			if (log.reg_y != reg_y) {
-//				debug_info += " y ";
-//			}
-//			if (log.reg_sp != reg_sp) {
-//				debug_info += " sp ";
-//			}
-//			if (debug_logs.peek_addr != -1) {
-//				if (log.peeked != Peek((uint16_t)debug_logs.peek_addr)) {
-//					debug_info += " mem ";
-//				}
-//			} else {
-//				if (log.peeked != Peek(reg_pc)) {
-//					debug_info += " op ";
-//				}
-//			}
-//			if (debug_info.length()) {
-//				printf("%d: %s\n", executed_insts, debug_info.c_str());
-//				exit(-1);
-//			}
-//		}
-//		if (executed_insts >= debug_logs.insts_start + debug_logs.insts_count) {
-//			printf("ok\n");
-//		}
-//#endif
+#ifndef ARDUINO
+            if (cycles % 100 == 0) {
+                // usleep(1);
+            }
+#endif
             switch (Peek(reg_pc++)) {
                 case 0x00: {
                     reg_pc++;
@@ -2663,32 +2726,6 @@ namespace wqx {
                 }
                     break;
             }
-//#ifdef DEBUG
-//		if (should_irq && !(reg_ps & 0x04)) {
-//			should_irq = false;
-//			stack[reg_sp --] = reg_pc >> 8;
-//			stack[reg_sp --] = reg_pc & 0xFF;
-//			reg_ps &= 0xEF;
-//			stack[reg_sp --] = reg_ps;
-//			reg_pc = PeekW(IRQ_VEC);
-//			reg_ps |= 0x04;
-//			cycles += 7;
-//		}
-//		executed_insts ++;
-//		if (executed_insts % 6000 == 0) {
-//			timer1_cycles += CYCLES_TIMER1;
-//			clock_buff[4] ++;
-//			if (should_wake_up) {
-//				should_wake_up = false;
-//				ram_io[0x01] |= 0x01;
-//				ram_io[0x02] |= 0x01;
-//				reg_pc = PeekW(RESET_VEC);
-//			} else {
-//				ram_io[0x01] |= 0x08;
-//				should_irq = true;
-//			}
-//		}
-//#else
             if (cycles >= timer0_cycles) {
                 timer0_cycles += CYCLES_TIMER0;
                 timer0_toggle = !timer0_toggle;
@@ -2730,7 +2767,7 @@ namespace wqx {
                     should_irq = true;
                 }
             }
-//#endif
+            //#endif
         }
 
         cycles -= end_cycles;
@@ -2743,6 +2780,14 @@ namespace wqx {
         wqx::reg_x = reg_x;
         wqx::reg_y = reg_y;
         wqx::reg_sp = reg_sp;
+#ifdef ARDUINO
+        double seconds = (millis() - begin) / 1000.0;
+#else
+        clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+        auto seconds = (end.tv_nsec - begin.tv_nsec) / 1000000000.0 +
+                       (end.tv_sec - begin.tv_sec) * 1000;
+#endif
+        instructions_per_second = end_cycles / seconds;
     }
 
 }

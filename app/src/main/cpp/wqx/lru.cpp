@@ -5,10 +5,18 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifdef ARDUINO
+#include <Arduino.h>
+#else
+#endif
 
 // 创建新的node节点
 node_t *new_node(key_type key, value_type value) {
+#ifdef ARDUINO
+    node_t *node = (node_t *) ps_malloc(sizeof(node_t));
+#else
     node_t *node = (node_t *) malloc(sizeof(node_t));
+#endif
     node->key = key;
     memcpy(node->value, value, sizeof(value_type));
     node->prev = NULL;
@@ -24,7 +32,12 @@ void del_node(node_t *node) {
 // 初始化哈希表
 void init_hash_table(hash_table_t *ht, int size, unsigned int (*hash_func)(key_type key)) {
     ht->size = size;
-    ht->list = (node_t **) calloc(size, sizeof(node_t *));
+#ifdef ARDUINO
+    ht->list = (node_t **) ps_malloc(size * sizeof(node_t *));
+#else
+    ht->list = (node_t **) malloc(size * sizeof(node_t *));
+#endif
+    memset(ht->list, 0x0, size * sizeof(node_t *));
     ht->hash_func = hash_func;
 }
 
@@ -213,10 +226,11 @@ node_t *delete_node_from_tail(lru_t *lru) {
 }
 
 // 获取value
-bool get_value(lru_t *lru, key_type key, value_type value) {
+bool get_value(lru_t *lru, key_type key, value_type** value) {
     node_t *node = find_node(&lru->ht, key);
     if (node) {
-        memcpy(value, node->value, sizeof(value_type));
+        *value = &(node->value);
+        // memcpy(value, node->value, sizeof(value_type));
         move_node_to_head(lru, node);
         return true;
     }
@@ -289,7 +303,7 @@ int main_test() {
     insert_value_to_lru(&lru, 2, v2);
     insert_value_to_lru(&lru, 3, v3);
     print_lru(&lru); // LRU (capacity=3, size=3): chain: 3,2,1
-    get_value(&lru, 2, value);
+    // get_value(&lru, 2, value);
     printf("get(2)=%02X%02X%02X%02X\n", value[0], value[1], value[2], value[3]); // get(2)=55667788
     insert_value_to_lru(&lru, 4, v4);
     print_lru(&lru); // LRU (capacity=3, size=3): chain: 4,2,3

@@ -91,7 +91,7 @@ void move_node_to_head(lru_t *lru, node_t *node);
 node_t *delete_node_from_tail(lru_t *lru);
 
 // 获取value
-bool get_value(lru_t *lru, key_type key, value_type value);
+bool get_value(lru_t *lru, key_type key, value_type** value);
 
 // 插入键值对
 void insert_value_to_lru(lru_t *lru, key_type key, value_type value);
