@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.ResultReceiver;
+import android.util.Log;
 
 public class NC1020_Service extends Service {
 
@@ -22,7 +23,9 @@ public class NC1020_Service extends Service {
 
 		@Override
 		public void run() {
+			long start = System.nanoTime();
 			NC1020_JNI.RunTimeSlice(FRAME_INTERVAL, mSpeedUp);
+			Log.e("eggfly", "cost: " + (System.nanoTime() - start));
 			frameHandler.postDelayed(frameRunnable, FRAME_INTERVAL);
 			if (!mBackground && activityReceiver != null) {
 				activityReceiver.send(RESULT_FRAME, null);

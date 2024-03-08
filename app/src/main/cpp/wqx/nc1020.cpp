@@ -5,6 +5,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <iostream>
+#include <vector>
+#include <algorithm>
 
 #ifndef ARDUINO
 
@@ -25,6 +28,64 @@
 
 namespace wqx {
     using std::string;
+
+    struct Interval {
+        int start;
+        int end;
+
+        Interval(int s, int e) : start(s), end(e) {}
+    };
+
+//    void printIntervals(const std::vector<Interval> &intervals) {
+//        for (const auto &interval: intervals) {
+//            std::cout << interval.start << "-" << interval.end << " ";
+//        }
+//        std::cout << std::endl;
+//    }
+    const int BLOCK_SIZE = 4;  // 区间块大小，可以修改为512或其他值
+
+    int printIntervals(const std::vector<Interval> &intervals) {
+        int totalBlocks = 0;
+
+        for (const auto &interval: intervals) {
+            int startBlock = interval.start / BLOCK_SIZE;
+            int endBlock = interval.end / BLOCK_SIZE;
+            int blocks = endBlock - startBlock + 1;
+            totalBlocks += blocks;
+
+//            std::cout << interval.start << "-" << interval.end << " ";
+        }
+        return totalBlocks;
+//        std::cout << std::endl;
+//        std::cout << "Total 1024-byte blocks: " << totalBlocks << std::endl;
+    }
+    void updateIntervals(std::vector<Interval> &intervals, int addr) {
+        int start = addr & ~(BLOCK_SIZE - 1);  // 对齐到1K边界
+        int end = start + BLOCK_SIZE - 1;
+
+        auto it = std::lower_bound(intervals.begin(), intervals.end(), Interval(start, end),
+                                   [](const Interval &a, const Interval &b) {
+                                       return a.end < b.start;
+                                   });
+
+        if (it != intervals.end() && it->start <= end + 1) {
+            // 合并区间
+            it->start = std::min(it->start, start);
+            it->end = std::max(it->end, end);
+
+            // 检查并合并相邻区间
+            auto next = std::next(it);
+            while (next != intervals.end() && next->start <= it->end + 1) {
+                it->end = std::max(it->end, next->end);
+                next = intervals.erase(next);
+            }
+        } else {
+            // 插入新区间
+            intervals.insert(it, Interval(start, end));
+        }
+    }
+
+    std::vector<Interval> intervals;
 
 // cpu cycles per second (cpu freq).
     const size_t CYCLES_SECOND = 5120000 * 2;
@@ -561,6 +622,10 @@ Serial.println("Failed to open file for reading....");
     uint8_t *peekROMByte(size_t pos) {
         auto bank_idx = pos / 0x8000;
         auto addr = pos % 0x8000;
+        updateIntervals(intervals, pos);
+        // printIntervals(intervals);
+        // LOGE("peekROMByte() addr=%d", addr);
+
         if (addr >= 0x4000) {
             addr -= 0x4000;
         } else {
@@ -1006,7 +1071,8 @@ Serial.println("Failed to open file for reading....");
 #else
         struct timespec begin, end;
         clock_gettime(CLOCK_MONOTONIC_RAW, &begin);
-        LOGE("RunTimeSlice: %d, IPS=%lf", slice_count, instructions_per_second);
+        LOGE("RunTimeSlice: %d, ROM increased_to=%dKB, IPS=%lf", slice_count, printIntervals(intervals) * BLOCK_SIZE / 1024,
+             instructions_per_second);
 #endif
         size_t end_cycles = time_slice * CYCLES_MS;
         register size_t cycles = wqx::cycles;
